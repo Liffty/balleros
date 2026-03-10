@@ -126,11 +126,40 @@ protected_mode_start:
   jmp .print_loop
 
 .done:
-  hlt
+  ; === initialize page tabels (4 levels, 4KB pages) ===
+  ;  reset the mememory for page tables (4 x 4096 bytes)
+  mov edi, 0x1000
+  mov cr3, edi
+  xor eax, eax
+  mov ecx, 4096
+  rep stosd
 
+  ; PML4 entry 0 -> PDPT
+  mov dword [0x1000], 0x2003
+
+  ; PML3 entry 0 -> PDT
+  mov dword [0x2000], 0x3003
+
+  ; PML2 entry 0 -> PT
+  mov dword [0x3000], 0x4003
+
+  ; Fyldt PT med 512 entries der mapper 0x0000 - 0x1FFFFF (2 MB)
+  mov edi, 0x4000
+  mov eax, 0x0003
+  mov ecx, 512
+
+.fill_pt:
+  mov[edi], eax
+  add eax, 0x1000
+  add edi, 8
+  loop .fill_pt
+
+  ; Page tabels should be ready
+  ; idk tho
+  .hlt ; Du skal erstatte alt her bruh
 
 msg_stage2:
   db "Stage 2 loaded!, Switching to protected mode...", 0
 
 msg_pmode:
-  db "32-bit protected mode!!!!!", 0
+  db "32-bit protected mode!!!!!"
