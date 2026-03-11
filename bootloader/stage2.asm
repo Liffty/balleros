@@ -244,7 +244,101 @@ long_mode_start:
   jmp .print64
 
 .done64:
-  hlt
+; === load kernel fra disk via ATA PIO ===
+
+; The kernel should be in sector 5 on the disk
+; (sektor 0 = stage1, sektor 1 to 4 = stage 2)
+; We load it to 0x100000
+;
+mov rdi, 0x100000 ; destination in memory
+mov rsi, 5 ; start sector (LBA)
+mov rcx, 24 ; number of sectors (24 x 512 = 12 KB, enoguh for our kernel)
+call ata_read_sectors
+
+; Jump to kernel
+jmp 0x100000
+
+
+
+; ==============
+; ATA PIO Disk driver (64-bit)
+; ==============
+; Input:
+;   RDI = destination address in memory
+;   RSI = LBA start sector
+;   RCX = number of sectors to read
+
+ata_read_sectors:
+  push rcx  ; save amount of sectors
+
+.read_next_sector:
+  ; wait until the disk is ready
+  call ata_wait_ready
+
+  ; Tell the controller what we want to read
+  mov dx, 0x1F2 ; sector count port
+  mov al, 1 ; read one sector
+  out dx, al 
+
+  mov dx, 0x1F3 ; LBA low (bit 0-7)
+  mov rax, rsi
+  out dx, al
+
+  mov dx, 0x1F4 ; LBA mid (bit 8-15)
+  shr rax, 8
+  out dx, al
+
+  mov dx, 0x1F5 ; LBA high (bit 16 - 23)
+  shr rax, 8
+  out dx, al
+
+  mov dx, 0x1F6 ; Drive/Head + LBA bit 24-27
+  shr rax, 8
+  and al, 0x0F ; only the last 4 bytes
+  or al, 0xE0 ; bit 7=1, bit 6=LBA mode, bit 5=1, bit 4=0 (master drive)
+  out dx, al
+
+  mov dx, 0x1F7 ; Command port
+  mov al, 0x20  ; command: Read sector
+  out dx, al
+
+  ; wait until data is ready
+  call ata_wait_data
+
+  ; Read 256 words (512 bytes = 1 sector) from the data port
+  mov dx, 0x1F0 ; data port
+  mov rcx, 256 ; so 256 words is 512 bytes
+  rep insw ; read word from port DX to [RDI], repeat RCX times
+
+  ; Next sector (RDI already advanced by rep insw)
+  inc rsi ; next LBA
+
+  pop rcx ; get number of sectors
+  dec rcx
+  jz .done
+  push rcx
+  jmp .read_next_sector
+
+.done:
+  ret
+
+; wait until the disk is ready (BSY bit cleared)
+ata_wait_ready:
+  mov dx, 0x1F7
+.wait:
+  in al, dx
+  test al, 0x80 ; bit 7 = BSY
+  jnz .wait ; wait if BSY flag is set
+  ret
+
+; wait until data is ready (DRQ bit set)
+ata_wait_data:
+  mov dx, 0x1F7
+.wait_drq:
+  in al, dx
+  test al, 0x08 ; bit 3 = DRQ
+  jz .wait_drq ; wait if DRQ flag is not set
+  ret
 
 msg_long:
   db "64-bit mode baller",0
