@@ -156,7 +156,99 @@ protected_mode_start:
 
   ; Page tabels should be ready
   ; idk tho
-  .hlt ; Du skal erstatte alt her bruh
+  
+  ; === Activate long mode ===
+  ; Turn on PEA (Physical Address Extension) in CR4
+  mov eax, cr4
+  or eax, 1 << 5 ; place bit 5 (PEA)
+  mov cr4, eax
+
+  ; Activate long mode in EFER MSR (Model specific Register)
+  mov ecx, 0xC0000080 ; EFER register-number
+  rdmsr ; Read EFER into EAX
+  or eax, 1 << 8 ; set bit 8 (Long mode enable)
+  wrmsr ; Write back
+
+  ; Turn on paging i CR0 (bit 31)
+  mov eax, cr0
+  or eax, 1 << 31
+  mov cr0, eax
+
+  ; Load new 64-GDT
+  lgdt [gdt64_descripter]
+
+  ; Far jump to 64-bit code
+  jmp 0x08:long_mode_start
+
+
+; ======
+; 64-bit GDT
+; ======
+gdt64_start:
+
+gdt64_null:
+  dq 0
+
+; 64-bit code segment
+gdt64_code:
+  dw 0xFFFF ; Limit (ingored in long mode, i think)
+  dw 0x0000 ; Base
+  db 0x00 ; Base
+  db 10011010b ; present, ring 0, executable, readable
+  db 10101111b ; 64-bit flag (bit 5) + granularity + limit
+  db 0x00 ; Base
+
+; 64-bit data segment
+gdt64_data:
+  dw 0xFFFF
+  dw 0x0000
+  db 0x00
+  db 10010010b ; presentm ring 0, writable
+  db 10101111b
+  db 0x00
+
+gdt64_end:
+
+gdt64_descripter:
+  dw gdt64_end - gdt64_start - 1
+  dd gdt64_start
+
+
+; =======
+; 64-bit Long mode
+; =======
+
+[BITS 64]
+
+long_mode_start:
+  ; Update segmentregisters
+  mov ax, 0x10 ; data segment (entry 2 in GDT64)
+  mov ds, ax
+  mov es, ax
+  mov fs, ax
+  mov gs, ax
+  mov ss, ax
+
+  ; Write to VGA buffer as proof that we are now in 64 - bit (baller)
+  mov rdi, 0xB8000
+  add rdi, 160 ; line 2 (80 characters x 2 bytes)
+  mov rsi, msg_long
+  mov ah, 0x0E ; color, yellow on black
+
+.print64:
+  lodsb
+  or al, al
+  jz .done64
+  mov [rdi], ax
+  add rdi, 2
+  jmp .print64
+
+.done64:
+  hlt
+
+msg_long:
+  db "64-bit mode baller",0
+
 
 msg_stage2:
   db "Stage 2 loaded!, Switching to protected mode...", 0
