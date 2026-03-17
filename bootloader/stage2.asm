@@ -283,19 +283,114 @@ long_mode_start:
   jmp .print64
 
 .done64:
-; === load kernel fra disk via ATA PIO ===
+; Calculate root directory section
+; The formula for this should be:
+; section = data_start + (root_cluster - 2) * sectors_per_cluster
+xor rax, rax
+mov eax, [bpb_rootclus]
+sub eax, 2
+xor rbx, rbx
+mov bl, [bpb_spc]
+mul ebx
+xor rbx, rbx
+mov ebx, [data_start_sector]
+add rax, rbx
 
-; The kernel should be in sector 5 on the disk
-; (sektor 0 = stage1, sektor 1 to 4 = stage 2)
-; We load it to 0x100000
-;
-mov rdi, 0x100000 ; destination in memory
-mov rsi, 5 ; start sector (LBA)
-mov rcx, 24 ; number of sectors (24 x 512 = 12 KB, enoguh for our kernel)
+; This makes okay sense i think
+
+; We load the root directory to 0x80000 (tempoary)
+mov rdi, 0x80000
+mov rsi, rax ; Start sector
+xor rcx, rcx
+mov cl, [bpb_spc] ; read one cluster
 call ata_read_sectors
 
-; Jump to kernel
-jmp 0x100000
+; search for KERNEL.BIN in directory entries
+mov rdi, 0x80000 ; start from the root dir buffer
+mov rcx, 16 ; max entries to check
+
+
+.search_entry:
+  ; check if entry is empty
+  mov al, [rdi]
+  cmp al, 0x00 ; empty
+  je .kernel_not_found
+
+  ; check if the entry has been deleted
+  cmp al, 0xE5 ; deleted
+  je .next_entry
+
+  ; compare 11 bytes with the file name KERNEL BIN
+  push rcx
+  push rdi
+  mov rsi, kernel_filename
+  mov rcx, 11
+  repe cmpsb ; compare byte for byte
+  pop rdi
+  pop rcx
+  je .kernel_found
+
+.next_entry:
+  add rdi, 32 ; next 32 bytes
+  loop .search_entry
+
+.kernel_not_found:
+  ; print error message with VGA buffer
+  mov rdi, 0xB8000
+  add rdi, 320
+  mov rsi, msg_no_kernel
+  mov ah, 0x0C ; red color
+
+.print_err:
+  lodsb
+  or al, al
+  jz .err_done
+  mov [rdi], ax
+  add rdi, 2
+  jmp .print_err
+.err_done:
+  hlt
+
+.kernel_found:
+  ; get the start cluster from the dir entry
+  ; cluster high = has offset 20, cluster low = has offset 26
+  xor rax, rax
+  mov ax, [rdi + 20] ; cluster high
+  shl eax, 16
+  mov ax, [rdi + 26] ; cluster low
+  mov [kernel_cluster], eax
+
+  ; get the file size
+  mov eax, [rdi + 28]
+  mov [kernel_size], eax
+
+  ; find out how many sectors we have to read
+  ; sector = (size + 511) / 512
+  add eax, 511
+  shr eax, 9 ; same as devidinge with 512
+  mov [kernel_sectors], eax
+
+  ; find the kernel sector on the disk
+  ; sector = data_start + (cluster - 2) * spc
+  xor rax, rax                 
+  mov eax, [kernel_cluster]      
+  sub eax, 2                   
+  xor rbx, rbx                 
+  mov bl, [bpb_spc]            
+  mul ebx                      
+  xor rbx, rbx                 
+  mov ebx, [data_start_sector] 
+  add rax, rbx                 
+
+  ; Load the kernel to 0x100000
+  mov rdi, 0x100000
+  mov rsi, rax
+  xor rcx, rcx
+  mov ecx, [kernel_sectors]
+  call ata_read_sectors
+
+  jmp 0x100000
+
 
 
 
@@ -382,12 +477,17 @@ ata_wait_data:
 msg_long:
   db "64-bit mode baller",0
 
-
 msg_stage2:
   db "Stage 2 loaded!, Switching to protected mode...", 0
 
 msg_pmode:
   db "32-bit protected mode!!!!!"
+
+kernel_filename: db "KERNEL  BIN" ; 8.3 format: 8 bytes name + 3 bytes ext
+kernel_cluster: dd 0
+kernel_size: dd 0
+kernel_sectors: dd 0
+msg_no_kernel: db "KERNEL.BIN not found!",0 
 
 
 ; BPB values 

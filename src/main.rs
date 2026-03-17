@@ -9,9 +9,9 @@ use core::panic::PanicInfo;
 pub extern "C" fn _start() -> ! {
     // We write to the vga buffer as proof
     let vga_buffer = 0xB8000 as *mut u8;
-    let msg = b"Frode er gay and hello from Rust kernel!";
+    let msg = b"Hello from Rust kernel!";
     let color = 0x0F; // white on black
-    
+
     for (i, &byte) in msg.iter().enumerate() {
         unsafe {
             // line 3 in VGA (2 lines used in by bootloader)
@@ -20,12 +20,12 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    // The kernel should never return. 
-    loop{}
+    // The kernel should never return.
+    loop {}
 }
 
 // Rust needs a panic handler, we don't have a std, so we need to make our own.
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop{}
+    loop {}
 }
