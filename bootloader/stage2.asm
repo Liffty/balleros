@@ -6,6 +6,45 @@ stage2_start:
   mov si, msg_stage2
   call print_string_16
 
+  ; === Read BPB fra boot sector (0x7C00) ===
+  ; Boot sectoren is still in mememory from BIOS
+  ;
+  ; calculate start of data area
+  ; data_start_sector = reserver_sectors + (num_fats * fat_size_32)
+
+  xor eax, eax
+  mov ax, [0x7C00 + 14] ; BPB offset 14 = reverved_sectors (word)
+  mov [bpb_reserved], ax
+
+  xor eax, eax
+  mov al, [0x7C00 + 16] ; BPB offset 16 = num_fats (byte)
+  mov [bpb_nfats], al
+
+  mov eax, [0x7C00 + 36] ; BPB offset 36 = fat_size_32 (dword)
+  mov [bpb_fatsize], eax
+
+  xor eax, eax
+  mov al, [0x7C00 + 13] ; BPB offset 13 = secors_per_cluster (byte)
+  mov [bpb_spc], al
+
+  mov eax, [0x7C00 + 44] ; BPB offset 44 = root_cluster (dword)
+  mov [bpb_rootclus], eax
+
+
+  ; calculate data_start = reserved + (num_fats * fat_size)
+  xor eax, eax
+  mov al, [bpb_nfats]
+  mul dword [bpb_fatsize] ; eax = num_fats *fat_size
+  xor ebx, ebx
+  mov bx, [bpb_reserved]
+  add eax, ebx  ; eax = reserved + (num_fats * fat_size)
+  mov [data_start_sector], eax
+
+  ; calculate fat_start = reverved_sectors
+  xor eax, eax
+  mov ax, [bpb_reserved]
+  mov [fat_start_sector], eax
+
   ; === We prepare the transformation to 32-bit protected mode ===
   cli  ; Turn off interrupts we will not want BIOS 
        ; interrupts in the middle of mode change
@@ -349,3 +388,15 @@ msg_stage2:
 
 msg_pmode:
   db "32-bit protected mode!!!!!"
+
+
+; BPB values 
+bpb_reserved: dw 0
+bpb_nfats: db 0
+bpb_fatsize: dd 0
+bpb_spc: db 0
+bpb_rootclus: dd 0
+data_start_sector: dd 0
+fat_start_sector: dd 0
+
+

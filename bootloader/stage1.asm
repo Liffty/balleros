@@ -15,7 +15,7 @@
 
 bpb_oem_id: db "BALLEROS" ; 8 bytes OEM identifikation.
 bpb_bytes_per_sec: dw 512 ; Bytes per sektor
-bpb_sec_per_clus: dw 8 ; sector per cluster
+bpb_sec_per_clus: db 8 ; sector per cluster
 bpb_reserved_secs_ dw 32 ; reserverd sector (should be space enogugh for stage2)
 bpb_num_fats: db 2 ; number of FAT-copys
 bpb_root_ent_cnt: dw 0 ; 0 for FAT32 (root dir is in clusters)
@@ -31,15 +31,16 @@ bpb_total_sec_32 dd 65536 ; total number of sectors (32 MB / 512)
 bpb_fat_size_32: dd 512 ; sector per FAT
 bpb_ext_flags: dw 0 ; flags
 bpb_fs_version: dw 0 ; FAT32 version (0.0)
-bpb_root_cluster: dd 1 ; root directory starts in custer 2
-bpb_backup_boot: dw 6 ; backup root sector
+bpb_root_cluster: dd 2 ; root directory starts in cluster 2
+bpb_fsinfo: dw 1 ; FSInfo sector number
+bpb_backup_boot: dw 6 ; backup boot sector
 bpb_reserved: times 12 db 0; reserverd
 bpb_drive_num: db 0x80 ; harddisk
 bpb_reserved2: db 0 ; reserverd
 bpb_boot_sig: db 0x29 ; extended boot signatur
 bpb_volume_id: dd 0x12345678 ; volume serial number
-bpb_volume_label dd "BALLEROS   " ; 11 bytes volume label
-bpb_fs_type: db "FAT32  " ; 8 bytes filesystem.
+bpb_volume_label: db "BALLEROS   " ; 11 bytes volume label
+bpb_fs_type: db "FAT32   " ; 8 bytes filesystem type
 
 
 start:
