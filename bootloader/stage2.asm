@@ -44,6 +44,12 @@ stage2_start:
   mov ax, [bpb_reserved]
   mov [fat_start_sector], eax
 
+  ; === Enable A20 line (required to access memory above 1MB) ===
+  in al, 0x92
+  or al, 2
+  and al, 0xFE   ; make sure bit 0 (fast reset) is NOT set
+  out 0x92, al
+
   ; === Prepare the transition to 32-bit protected mode ===
   cli  ; Disable interrupts during mode change
 
@@ -275,6 +281,10 @@ long_mode_start:
   jmp .print64
 
 .done64:
+  ; === Debug marker 1: About to read root directory ===
+  mov byte [0xB8000 + 480], '1'
+  mov byte [0xB8000 + 481], 0x0E
+
   ; === Find and load KERNEL.BIN from FAT32 ===
 
   ; Calculate root directory sector:
@@ -295,6 +305,10 @@ long_mode_start:
   xor rcx, rcx
   mov cl, [bpb_spc]   ; read one cluster
   call ata_read_sectors
+
+  ; === Debug marker 2: Root dir loaded ===
+  mov byte [0xB8000 + 484], '2'
+  mov byte [0xB8000 + 485], 0x0E
 
   ; Search for KERNEL.BIN in directory entries
   mov rdi, 0x80000    ; start of root dir buffer
@@ -371,12 +385,20 @@ long_mode_start:
   mov ebx, [data_start_sector]
   add rax, rbx
 
+  ; === Debug marker 3: Kernel found, about to load ===
+  mov byte [0xB8000 + 488], '3'
+  mov byte [0xB8000 + 489], 0x0E
+
   ; Load the kernel to 0x100000 (1 MB)
   mov rdi, 0x100000
   mov rsi, rax
   xor rcx, rcx
   mov ecx, [kernel_sectors]
   call ata_read_sectors
+
+  ; === Debug marker 4: Kernel loaded, about to jump ===
+  mov byte [0xB8000 + 492], '4'
+  mov byte [0xB8000 + 493], 0x0E
 
   ; Jump to kernel
   jmp 0x100000
@@ -463,7 +485,7 @@ ata_wait_data:
 ; === String data ===
 msg_long:     db "64-bit mode baller", 0
 msg_stage2:   db "Stage 2 loaded!, Switching to protected mode...", 0
-msg_pmode:    db "32-bit protected mode!!!!!"
+msg_pmode:    db "32-bit protected mode!!!!!", 0
 
 ; === FAT32 kernel loading data ===
 kernel_filename: db "KERNEL  BIN" ; 8.3 format: 8 bytes name + 3 bytes ext
