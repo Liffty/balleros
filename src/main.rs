@@ -1,26 +1,25 @@
 #![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
+mod vga;
 
-// Kernl will start here - so the will be our new entry point
-#[unsafe(no_mangle)] // This will prevent rust from changing the function name
+use core::fmt::Write;
+use core::panic::PanicInfo;
+use vga::{Color, Writer};
+
+#[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 pub extern "C" fn _start() -> ! {
-    // We write to the vga buffer as proof
-    let vga_buffer = 0xB8000 as *mut u8;
-    let msg = b"Hello from Rust kernel!";
-    let color = 0x0F; // white on black
+    let mut writer = Writer::new();
+    writer.clear_screen();
+    writer.set_color(Color::LightGreen, Color::Black);
 
-    for (i, &byte) in msg.iter().enumerate() {
-        unsafe {
-            // line 3 in VGA (2 lines used in by bootloader)
-            *vga_buffer.offset((320 + i * 2) as isize) = byte;
-            *vga_buffer.offset((320 + i * 2 + 1) as isize) = color;
-        }
-    }
+    write!(writer, "Welcome to BallerOS!\n").unwrap();
 
-    // The kernel should never return.
+    writer.set_color(Color::White, Color::Black);
+    write!(writer, "VGA driver loaded.\n").unwrap();
+    write!(writer, "Screen: {}x{} characters\n", 80, 25).unwrap();
+
     loop {}
 }
 
