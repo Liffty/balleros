@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod idt;
 mod vga;
 
 use core::fmt::Write;
@@ -15,6 +16,12 @@ pub extern "C" fn _start() -> ! {
     writer.set_color(Color::LightGreen, Color::Black);
 
     write!(writer, "Welcome to BallerOS!\n").unwrap();
+
+    let mut interrupt_table = idt::Idt::new();
+    idt::register_exception_handlers(&mut interrupt_table);
+    interrupt_table.load();
+
+    write!(writer, "IDT loaded: 256 entries\n").unwrap();
 
     writer.set_color(Color::White, Color::Black);
     write!(writer, "VGA driver loaded.\n").unwrap();
