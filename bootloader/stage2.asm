@@ -256,6 +256,7 @@ gdt64_descriptor:
 ; =======
 
 [BITS 64]
+DEFAULT ABS
 
 long_mode_start:
   ; Update segment registers
