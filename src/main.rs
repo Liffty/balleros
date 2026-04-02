@@ -2,6 +2,7 @@
 #![no_main]
 
 mod idt;
+mod pic;
 mod port;
 mod vga;
 
@@ -28,10 +29,6 @@ pub extern "C" fn _start() -> ! {
     writer.set_color(Color::White, Color::Black);
     write!(writer, "VGA driver loaded.\n").unwrap();
     write!(writer, "Screen: {}x{} characters\n", 80, 25).unwrap();
-
-    let ps2_status = Port::<u8>::new(0x64);
-    let status = unsafe { ps2_status.read() };
-    write!(writer, "PS/2 status port: 0x{:02X}\n", status).unwrap();
 
     loop {}
 }

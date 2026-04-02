@@ -85,51 +85,51 @@ impl Idt {
 
 // Generic exception handler - prints interrupt-number and stops
 macro_rules! exception_handler {
-    ($name:ident, $number:expr, $msg:expr) => {
-        #[unsafe(naked)]
-        pub extern "C" fn $name() {
-            naked_asm!(
-                // Save all the general purpose registers
-                "push rax",
-                "push rbx",
-                "push rcx",
-                "push rdx",
-                "push rsi",
-                "push rdi",
-                "push rbp",
-                "push r8",
-                "push r9",
-                "push r10",
-                "push r11",
-                "push r12",
-                "push r13",
-                "push r14",
-                "push r15",
-                // Call Rust handler with the interupt number as argument
-                "mov rdi, {number}",
-                "call {rust_handler}",
-                // reentry register
-                "pop r15",
-                "pop r14",
-                "pop r13",
-                "pop r12",
-                "pop r11",
-                "pop r10",
-                "pop r9",
-                "pop r8",
-                "pop rbp",
-                "pop rdi",
-                "pop rsi",
-                "pop rdx",
-                "pop rcx",
-                "pop rbx",
-                "pop rax",
-                "iretq",
-                number = const $number,
-                rust_handler = sym generic_exceptoin_handler,
-            );
-        }
-    };
+($name:ident, $number:expr, $msg:expr) => {
+    #[unsafe(naked)]
+    pub extern "C" fn $name() {
+        naked_asm!(
+            // Save all the general purpose registers
+            "push rax",
+            "push rbx",
+            "push rcx",
+            "push rdx",
+            "push rsi",
+            "push rdi",
+            "push rbp",
+            "push r8",
+            "push r9",
+            "push r10",
+            "push r11",
+            "push r12",
+            "push r13",
+            "push r14",
+            "push r15",
+            // Call Rust handler with the interupt number as argument
+            "mov rdi, {number}",
+            "call {rust_handler}",
+            // reentry register
+            "pop r15",
+            "pop r14",
+            "pop r13",
+            "pop r12",
+            "pop r11",
+            "pop r10",
+            "pop r9",
+            "pop r8",
+            "pop rbp",
+            "pop rdi",
+            "pop rsi",
+            "pop rdx",
+            "pop rcx",
+            "pop rbx",
+            "pop rax",
+            "iretq",
+            number = const $number,
+            rust_handler = sym generic_exceptoin_handler,
+        );
+    }
+};
 }
 
 // Rust - function that vil be called by exception handlers
