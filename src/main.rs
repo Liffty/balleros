@@ -8,6 +8,7 @@ mod vga;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
+use pic::ChainedPics;
 use port::Port;
 use vga::{Color, Writer};
 
@@ -29,6 +30,10 @@ pub extern "C" fn _start() -> ! {
     writer.set_color(Color::White, Color::Black);
     write!(writer, "VGA driver loaded.\n").unwrap();
     write!(writer, "Screen: {}x{} characters\n", 80, 25).unwrap();
+
+    let pics = ChainedPics::new();
+    pics.remap();
+    write!(writer, "PIC remapped: IRQ 0-15 -> INT 32-47\n").unwrap();
 
     loop {}
 }
