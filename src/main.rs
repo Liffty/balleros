@@ -4,6 +4,7 @@
 mod idt;
 mod pic;
 mod port;
+mod sync;
 mod vga;
 
 use core::fmt::Write;
