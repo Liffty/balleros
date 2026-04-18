@@ -17,7 +17,7 @@ use vga::{Color, Writer};
 pub extern "C" fn _start() -> ! {
     let mut writer = Writer::new();
     writer.clear_screen();
-    writer.set_color(Color::LightGreen, Color::Black);
+    writer.set_color(Color::Pink, Color::Black);
 
     write!(writer, "Welcome to BallerOS!\n").unwrap();
 
