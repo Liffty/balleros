@@ -1,6 +1,7 @@
 [BITS 16] ; Fortæller NASM vi skriver 16-bit kode
+%ifndef ELF
 [ORG 0x7C00] ; Vores kode bliver loaded på den her adresse af BIOS
-
+%endif
 
 ; === The first 3 bytes: jump over BPB ===
   jmp short start

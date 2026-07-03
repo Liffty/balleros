@@ -5,6 +5,7 @@ build-std = ["core", "compiler_builtins"]
 target = "x86_64-unknown-none"
 
 [target.x86_64-unknown-none]
-rustflags = ["-C", "link-arg=T", "-C","link-arg=linker.ld"]
+rustflags = ["-C", "link-arg=-Tlinker.ld"]
+
 
 

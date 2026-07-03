@@ -1,5 +1,7 @@
 [BITS 16]
+%ifndef ELF
 [ORG 0x7E00] ; loaded here by stage 1
+%endif
 
 stage2_start:
   ; Print message so we know stage 2 is running
