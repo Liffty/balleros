@@ -5,3 +5,4 @@
 *.img 
 *.o 
 *.elf
+*.efi
