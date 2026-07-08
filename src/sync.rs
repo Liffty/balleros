@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 // RFLAGS bit 9 (IF - Interrupt Flag) fortæller det: 1 = til, 0 = fra.
 // pushfq skubber RFLAGS på stakken, vi popper den ind i en variable og masker bit 9
 fn interrupts_enabled() -> bool {
-    let flags: u64L;
+    let flags: u64;
     unsafe {
         asm!("pushfq", "pop {}", out(reg) flags, options(nomem));
     }
@@ -35,17 +35,17 @@ fn enable_interrupts() {
 // Besktytter data mod at flere tilgår det samtidigt
 // "spin" = venter i en løkke til låsen er fri, i stedet fro at sove
 
-pub struct Spinlock<T> {
+pub struct SpinLock<T> {
     locked: AtomicBool,
     data: UnsafeCell<T>,
 }
 
 // Fortæller Rust det er sikkert at dele en spinlock mellem tråde
 // Låsen sikre selv adgangen
-unsafe impl<T> Sync for Spinlock<T> {}
+unsafe impl<T> Sync for SpinLock<T> {}
 
-impl<T> Spinlock<T> {
-    pub const fn new(data: T) -> Spinlock<T> {
+impl<T> SpinLock<T> {
+    pub const fn new(data: T) -> SpinLock<T> {
         SpinLock {
             locked: AtomicBool::new(false),
             data: UnsafeCell::new(data),
@@ -102,7 +102,7 @@ impl<'a, T> Drop for SpinGuard<'a, T> {
 // Undgår deadlock i interrupts
 
 pub struct IrqSafeSpinLock<T> {
-    inner: Spinlock<T>,
+    inner: SpinLock<T>,
 }
 
 unsafe impl<T> Sync for IrqSafeSpinLock<T> {}
@@ -110,7 +110,7 @@ unsafe impl<T> Sync for IrqSafeSpinLock<T> {}
 impl<T> IrqSafeSpinLock<T> {
     pub const fn new(data: T) -> IrqSafeSpinLock<T> {
         IrqSafeSpinLock {
-            inner: Spinlock::new(data),
+            inner: SpinLock::new(data),
         }
     }
 
@@ -120,7 +120,6 @@ impl<T> IrqSafeSpinLock<T> {
         // 2. Slå dem fra, så ingen interrupt kan afbryde os her.
         disable_interrupts();
         // 3. Tag den indre lås (den almindelige spin-logik)
-        let guard = self.inner.lock();
         let guard = self.inner.lock();
         IrqSafeGuard {
             _guard: guard,

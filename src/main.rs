@@ -5,19 +5,33 @@ mod idt;
 mod pic;
 mod port;
 mod vga;
+mod sync;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use pic::ChainedPics;
 use port::Port;
 use vga::{Color, Writer};
+use sync::IrqSafeSpinLock;
+
+
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 pub extern "C" fn _start() -> ! {
+
+
     let mut writer = Writer::new();
     writer.clear_screen();
     writer.set_color(Color::LightGreen, Color::Black);
+
+    static TEST_LOCK: IrqSafeSpinLock<u32> = IrqSafeSpinLock::new(0);
+    {
+    let mut val = TEST_LOCK.lock();
+    *val += 1;
+    write!(writer, "Lock test: {}\n", *val).unwrap();
+    }
+
 
     write!(writer, "Welcome to BallerOS!\n").unwrap();
 
