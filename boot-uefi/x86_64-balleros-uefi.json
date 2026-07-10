@@ -1,0 +1,26 @@
+{
+  "llvm-target": "x86_64-unknown-windows",
+  "target-pointer-width": 64,
+  "arch": "x86_64",
+  "data-layout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+  "os": "uefi",
+  "is-like-windows": true,
+  "is-like-msvc": true,
+  "linker-flavor": "msvc-lld",
+  "linker-is-gnu": false,
+  "linker": "rust-lld",
+  "pre-link-args": {
+    "lld-link": ["/subsystem:efi_application", "/entry:efi_main"]
+  },
+  "executables": true,
+  "disable-redzone": true,
+  "stack-probes": { "kind": "call" },
+  "exe-suffix": ".efi",
+  "panic-strategy": "abort",
+  "default-visibility": "hidden",
+  "emit-debug-gdb-scripts": false,
+  "binary-format": "coff",
+  "archive-format": "coff",
+  "features": "-mmx,-sse,+soft-float",
+  "rustc-abi": "softfloat"
+}
