@@ -6,3 +6,9 @@
 *.o 
 *.elf
 *.efi
+
+
+target/
+*.EFI
+NvVars
+.idea/
