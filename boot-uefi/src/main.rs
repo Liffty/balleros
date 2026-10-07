@@ -88,8 +88,28 @@ pub struct BootServices {
     _exit: usize,
     _unload_image: usize,
     _exit_boot_services: usize,
+    _get_next_monotonic_count: usize,
+    _stall: usize,
+    _set_watchdog_timer: usize,
 
-    // TDOD skriv resten af tabellen.
+    // --- DriverSupport Services ---
+    _connect_controller: usize,
+    _disconnect_controller: usize,
+
+    // --- Open/Close Protocol Services ---
+    _open_protocol: usize,
+    _close_protocol: usize,
+    _open_protocol_information: usize,
+
+    // --- Library Services ---
+    _protocols_per_handle: usize,
+    _locate_handle_buffer: usize,
+    locate_protocol: extern "efiapi" fn(
+        protocol: *const Guid,
+        registration: *mut u8,  // NULL for os
+        interface: *mut *mut u8,    // out: protocol-pointer
+    ) -> Status,
+    // resten af tabellen findes, men vi stopper her
 }
 
 #[repr(C)]
@@ -99,6 +119,11 @@ pub struct Guid {
     data3: u16,
     data4: [u8; 8],
 }
+
+const GRAPHICS_OUTPUT_GUID: Guid = Guid {
+    data1: 0x9042A9DE, data2: 0x23DC, data3: 0x4A38,
+    data4: [0x96, 0xFB, 0x7A, 0xDE, 0xD0, 0x80, 0x51, 0x6A],
+};
     
 const LOADED_IMAGE_GUID: Guid = Guid {
     data1: 0x5B1B31A1, data2: 0x9562, data3: 0x11D2,
@@ -114,6 +139,28 @@ const FILE_INFO_GUID: Guid = Guid {
     data1: 0x09576E92, data2: 0x6D3F, data3: 0x11D2,
     data4: [0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B]
 };
+
+// Pixel-info for en video-mode
+#[repr(C)]
+pub struct GopModeInfo {
+    _version: u32,
+    horizontal_resolution: u32,
+    vertical_resolution: u32,
+    pixel_format: u32,
+    _pixel_bitmask: [u32; 4],
+    pixels_per_scan_line: u32,
+}
+
+// GOP's Mode-strut: peger til info + selve frambufferen.
+#[repr(C)]
+pub struct GopMode {
+    _max_mode: u32,
+    _mode: u32,
+    info: *const GopModeInfo,
+    _size_of_info: usize,
+    frame_buffer_base: u64, // fysisk adresse på frambufferen
+    frame_buffer_size: usize,
+}
 
 // Loadede Image - vi vil kun have device_handle ud (hvilken disk vi kom fra)
 #[repr(C)]
@@ -135,6 +182,14 @@ pub struct SimpleFileSystemProtocol {
     ) -> Status,
 }
 
+// Graphics Output Protocol
+#[repr(C)]
+pub struct GraphicsOutputProtocol {
+    _query_mode: usize,
+    _set_mode: usize,
+    _blt: usize,
+    mode: *const GopMode, // pointer. Not function
+}
 
 #[repr(C)]
 pub struct FileProtocol {
@@ -382,6 +437,61 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
             print(u8_to_hex(byte, &mut hb).as_ptr());
             print(space.as_ptr());
         }
+        let newline: &[Char16] = &[b'\r' as u16, b'\n' as u16, 0];
+        print(newline.as_ptr());
+
+        // --- 9 Graphics Output Protocol
+        let mut gop: *mut u8 = core::ptr::null_mut();
+            let status = (bs.locate_protocol)(
+                &GRAPHICS_OUTPUT_GUID,
+                core::ptr::null_mut(),
+                &mut gop,
+            );
+            if status != 0 {
+                let mut b = [0u16; 21];
+                print(prefix_err.as_ptr());
+                print(u64_to_utf16(9, &mut b).as_ptr());
+                    loop {}
+                }
+                let gop = &*(gop as *const GraphicsOutputProtocol);
+                let mode = &*gop.mode;
+                let info = &*mode.info;
+                
+                if info.pixel_format != 1 {
+                    let mut b = [0u16; 21];
+                    print(prefix_err.as_ptr());
+                    print(u64_to_utf16(10, &mut b).as_ptr());
+                        loop{}
+                }
+                
+                let width = info.horizontal_resolution;
+                let height = info.vertical_resolution;
+                let stride = info.pixels_per_scan_line; 
+                let fb = mode.frame_buffer_base as *mut u32;
+                
+
+                // --- 10. print opløsning "GOP: <w>x<h>"
+                let gop_label: &[Char16] = &[
+                    b'G' as u16, b'O' as u16, b'P' as u16, b':' as u16, b' ' as u16, 0,
+                ];
+                let x_sep: &[Char16] = &[b'x' as u16, 0];
+                let mut wb = [0u16; 21];
+                let mut hb = [0u16; 21];
+                print(gop_label.as_ptr());
+                print(u64_to_utf16(width as u64, &mut wb).as_ptr());
+                print(x_sep.as_ptr());
+                print(u64_to_utf16(height as u64, &mut hb).as_ptr());
+                print(newline.as_ptr());
+
+
+                // --- 11. TestMaling 
+                let x0 = width / 2 - 100;
+                let y0 = height / 2 - 50;
+                for y in y0..y0 + 100 {
+                    for x in x0..x0 + 200 {
+                        fb.add((y * stride + x) as usize).write_volatile(0x00FF0000);
+        }
+    }
 
     // boot services stopper ikke af sig selv; vi hænger bare her.
     loop {}
