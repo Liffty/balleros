@@ -219,6 +219,42 @@ pub struct FileProtocol {
     ) -> Status,
 }
 
+// === ELF64 ===
+#[repr(C)]
+pub struct Elf64Header {
+    ident: [u8; 16],
+    _elf_type: u16,
+    machine: u16,
+    _version: u32,
+    entry: u64,
+    phoff: u64,
+    _shoff: u64,
+    _flags: u32,
+    _ehsize: u16,
+    phentsize: u16,
+    phnum: u16,
+    _shentsize: u16,
+    _shnum: u16,
+    _shstrndx: u16,
+}
+
+#[repr(C)]
+pub struct Elf64ProgramHeader {
+    p_type: u32,
+    _flags: u32,
+    offset: u64,
+    vaddr: u64,
+    _paddr: u64,
+    filesz: u64,
+    memsz: u64,
+    _align: u64,
+}
+
+const PT_LOAD: u32 = 1;
+const KERNEL_VMA: u64 = 0xFFFF_FFFF_8000_0000;
+
+
+
 #[repr(C)]
 pub struct SystemTable {
     _header: TableHeader,       // 24 bytes, var før [u8; 24]
@@ -255,6 +291,18 @@ fn u64_to_utf16(mut n: u64, buf: &mut [Char16; 21]) -> &[Char16] {
     }
     buf[count] = 0;
     &buf[..count + 1]
+}
+
+fn u64_to_hex(n: u64, buf: &mut [Char16; 19]) -> &[Char16] {
+    let hex = b"0123456789ABCDEF";
+    buf[0] = b'0' as u16;
+    buf[1] = b'x' as u16;
+    for i in 0..16 {
+        let nibble = (n >> (60 - i * 4)) & 0xF;
+        buf[2 + i] = hex[nibble as usize] as u16;
+    }
+    buf[18] = 0;
+    &buf[..19]
 }
 
 fn u8_to_hex(byte: u8, buf: &mut [Char16; 3]) -> &[Char16] {
@@ -492,6 +540,89 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
                         fb.add((y * stride + x) as usize).write_volatile(0x00FF0000);
         }
     }
+
+    // --- 12. Valider ELF-headeren
+    let elf = &*(kernel_addr as *const Elf64Header);
+    let valid = elf.ident[0..4] == [0x7F, b'E', b'L', b'F']
+            && elf.ident[4] == 2
+            && elf.ident[5] == 1
+            && elf.machine == 0x3E
+            && elf.phentsize as usize == core::mem::size_of::<Elf64ProgramHeader>()
+            && elf.phoff + elf.phnum as u64 * elf.phentsize as u64 <= file_size;
+                if !valid {
+                    let mut b = [0u16; 21];
+    print(prefix_err.as_ptr());
+    print(u64_to_utf16(11, &mut b).as_ptr());
+            loop {}
+        }
+        let phdrs = core::slice::from_raw_parts((kernel_addr + elf.phoff) as *const Elf64ProgramHeader, elf.phnum as usize); 
+
+        // --- 13 
+        let mut v_start = u64::MAX;
+        let mut v_end = 0u64;
+        for ph in phdrs {
+            if ph.p_type != PT_LOAD {
+                continue;
+            }
+            v_start = v_start.min(ph.vaddr);
+            v_end = v_end.max(ph.vaddr + ph.memsz);
+            }
+            if v_start != KERNEL_VMA {
+                let mut b = [0u16; 21];
+        print(prefix_err.as_ptr());
+        print(u64_to_utf16(12, &mut b).as_ptr());
+            loop {}
+        }
+        let kernel_pages = ((v_end - v_start + 4095) / 4096) as usize;
+
+
+        // --- 14
+        let mut kernel_phys: u64 = 0;
+        let status = (bs.allocate_pages)(0,2,kernel_pages, &mut kernel_phys);
+            if status != 0 {
+                let mut b = [0u16; 21];
+        print(prefix_err.as_ptr());
+        print(u64_to_utf16(13, &mut b).as_ptr());
+            loop {}
+        }
+
+        core::ptr::write_bytes(kernel_phys as *mut u8, 0, kernel_pages * 4096);
+        // --- 15 
+        for ph in phdrs {
+            if ph.p_type != PT_LOAD {
+                    continue;
+            }
+            if ph.offset + ph.filesz > file_size {
+                let mut b = [0u16; 21];
+        print(prefix_err.as_ptr());
+        print(u64_to_utf16(14, &mut b).as_ptr());
+                loop {}
+                }
+                let src = (kernel_addr + ph.offset) as *const u8;
+                let dst = (kernel_phys + (ph.vaddr - KERNEL_VMA)) as *mut u8;
+                core::ptr::copy_nonoverlapping(src, dst, ph.filesz as usize);
+                }
+
+        // --- 16 
+        let elf_label: &[Char16] = &[
+        b'E' as u16, b'L' as u16, b'F' as u16, b':' as u16, b' ' as u16, 0,
+        ]; 
+        let pages_label: &[Char16] = &[
+        b' ' as u16, b'p' as u16, b'a' as u16, b'g' as u16, b'e' as u16, b's' as u16, b' ' as u16, b'@' as u16, b' ' as u16, 0,
+    ];
+        let entry_label: &[Char16] = &[
+        b' ' as u16, b'e' as u16, b'n' as u16, b't' as u16, b'r' as u16, b'y' as u16, b' ' as u16, 0, 
+    ];
+        let mut nb = [0u16; 21];
+        let mut pb = [0u16; 19];
+        let mut eb = [0u16; 19];
+        print(elf_label.as_ptr());
+        print(u64_to_utf16(kernel_pages as u64, &mut nb).as_ptr());
+        print(pages_label.as_ptr());
+        print(u64_to_hex(kernel_phys, &mut pb).as_ptr());
+        print(entry_label.as_ptr());
+        print(u64_to_hex(elf.entry, &mut eb).as_ptr());
+        print(newline.as_ptr());
 
     // boot services stopper ikke af sig selv; vi hænger bare her.
     loop {}

@@ -23,7 +23,7 @@ impl Serial {
             line_status: Port::new(COM1 + 5),
         }
     }
-    
+
     pub fn init(&self) {
         unsafe {
             self.int_enable.write(0x00);
@@ -40,8 +40,8 @@ impl Serial {
         unsafe {
             while self.line_status.read() & 0x20 == 0 {}
             self.data.write(byte);
-            }
         }
+    }
 }
 
 impl fmt::Write for Serial {
@@ -55,6 +55,3 @@ impl fmt::Write for Serial {
         Ok(())
     }
 }
-
-
-        

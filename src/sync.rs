@@ -57,14 +57,14 @@ impl<T> SpinLock<T> {
     pub fn lock(&self) -> SpinGuard<T> {
         // Prøv at sætte låsen fra false til true. Spin indtil det lykkes.
         while self
-        .locked
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
+            .locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
         {
             // Fortæl CPU'en vi spinner
             core::hint::spin_loop();
         }
-        SpinGuard { lock: self}
+        SpinGuard { lock: self }
     }
 }
 
@@ -83,7 +83,7 @@ impl<'a, T> core::ops::Deref for SpinGuard<'a, T> {
 
 impl<'a, T> core::ops::DerefMut for SpinGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.lock.data.get()}
+        unsafe { &mut *self.lock.data.get() }
     }
 }
 
@@ -93,8 +93,6 @@ impl<'a, T> Drop for SpinGuard<'a, T> {
         self.lock.locked.store(false, Ordering::Release);
     }
 }
-
-
 
 // ============================================================
 // IrqSafeSpinLock<T> - lås der er sikker at tage i interrupts-handler
@@ -130,8 +128,8 @@ impl<T> IrqSafeSpinLock<T> {
 
 // Guarden holder den indre SpinGuard i live.
 // Og hukser om interruås skal tændes igen ved drop.
-pub struct IrqSafeGuard<'a,T> {
-    _guard: SpinGuard<'a,T>,
+pub struct IrqSafeGuard<'a, T> {
+    _guard: SpinGuard<'a, T>,
     was_enabled: bool,
 }
 
@@ -142,7 +140,7 @@ impl<'a, T> core::ops::Deref for IrqSafeGuard<'a, T> {
     }
 }
 
-impl<'a, T> core::ops::DerefMut for IrqSafeGuard<'a,T> {
+impl<'a, T> core::ops::DerefMut for IrqSafeGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut *self._guard
     }
@@ -152,7 +150,7 @@ impl<'a, T> Drop for IrqSafeGuard<'a, T> {
     fn drop(&mut self) {
         // Rust droppper felterne i rækkefølgen. guard frigives først
         // Gendeanner så interruåts hvis de var sleåt til før.
-        // eller lader vi dem være slukket, så vi ikke tænder for dem et forkert sted. 
+        // eller lader vi dem være slukket, så vi ikke tænder for dem et forkert sted.
         if self.was_enabled {
             enable_interrupts();
         }

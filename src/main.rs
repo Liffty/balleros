@@ -4,29 +4,29 @@
 mod idt;
 mod pic;
 mod port;
-mod vga;
-mod sync;
 mod serial;
+mod sync;
+mod vga;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use pic::ChainedPics;
 use port::Port;
-use vga::{Color, Writer};
-use sync::IrqSafeSpinLock;
 use serial::Serial;
-
-
+use sync::IrqSafeSpinLock;
+use vga::{Color, Writer};
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 pub extern "C" fn _start() -> ! {
-
-
     let mut serial = Serial::new();
     serial.init();
-    write!(serial, "Hello from the higher half! _start = {:p}\n", _start as *const ()).unwrap();
-
+    write!(
+        serial,
+        "Hello from the higher half! _start = {:p}\n",
+        _start as *const ()
+    )
+    .unwrap();
 
     let mut writer = Writer::new();
     writer.clear_screen();
@@ -34,11 +34,10 @@ pub extern "C" fn _start() -> ! {
 
     static TEST_LOCK: IrqSafeSpinLock<u32> = IrqSafeSpinLock::new(0);
     {
-    let mut val = TEST_LOCK.lock();
-    *val += 1;
-    write!(writer, "Lock test: {}\n", *val).unwrap();
+        let mut val = TEST_LOCK.lock();
+        *val += 1;
+        write!(writer, "Lock test: {}\n", *val).unwrap();
     }
-
 
     write!(writer, "Welcome to BallerOS!\n").unwrap();
 
