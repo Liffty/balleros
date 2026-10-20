@@ -36,6 +36,20 @@ pub struct TableHeader {
     reserved: u32,
 }
 
+// === Memory map ===
+// En indgang i UEFI memory map
+// firmare kan bruge store descriptor_size end sizeof
+// Spring altid frem med descriptor_size ikke med size of
+#[repr(C)]
+pub struct MemoryDescriptor {
+    mem_type: u32,
+    _padding: u32,
+    phys_start: u64,
+    _virt_start: u64,
+    num_pages: u64,
+    _attribute: u64,
+}
+
 // === Boot services ===
 // Function-pointere i SPEC rækkefølgen.
 #[repr(C)]
@@ -54,7 +68,13 @@ pub struct BootServices {
         memory: *mut u64, // out: fysisk adresse på allokeret område
     ) -> Status,
     _free_pages: usize,
-    _get_memory_map: usize,
+    get_memory_map: extern "efiapi" fn(
+        map_size: *mut usize,
+        map: *mut u8,
+        map_key: *mut usize,
+        descripter_size: *mut usize,
+        descriptor_version: *mut u32,
+    ) -> Status,
     allocate_pool: extern "efiapi" fn(
         pool_type: u32, // EFI_MEMORY_TYPE (2=LoaderData)
         size: usize,
@@ -622,6 +642,70 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
         print(u64_to_hex(kernel_phys, &mut pb).as_ptr());
         print(entry_label.as_ptr());
         print(u64_to_hex(elf.entry, &mut eb).as_ptr());
+        print(newline.as_ptr());
+
+        // --- 17 mem map, første kald giver krævet størrelse
+        let mut mmap_size: usize = 0;
+        let mut map_key: usize = 0;
+        let mut desc_size: usize = 0;
+        let mut desc_version: u32 = 0;
+        let _ = (bs.get_memory_map)(
+            &mut mmap_size,
+            core::ptr::null_mut(),
+            &mut map_key,
+            &mut desc_size,
+            &mut desc_version,
+        );
+
+        let mmap_capacity = mmap_size + 32 * desc_size;
+        let mut mmap_buf: *mut u8 = core::ptr::null_mut();
+        let status = (bs.allocate_pool)(2, mmap_capacity, &mut mmap_buf);
+        if status != 0 {
+            let mut b = [0u16; 21];
+            print(prefix_err.as_ptr());
+            print(u64_to_utf16(15, &mut b).as_ptr());
+            loop {}
+        }
+
+        // andet kald: nu med buffer, så får vi selve mappen
+        mmap_size = mmap_capacity;
+        let status = (bs.get_memory_map)(
+            &mut mmap_size,
+            mmap_buf,
+            &mut map_key,
+            &mut desc_size,
+            &mut desc_version,
+        );
+        if status != 0 {
+            let mut b = [0u16; 21];
+            print(prefix_err.as_ptr());
+            print(u64_to_utf16(16, &mut b).as_ptr());
+            loop {}
+        }
+
+        // --- 18. Gå mappen igennem: antal indgange og højeste fysiske adresse ---
+        let entries = mmap_size / desc_size;
+        let mut max_phys: u64 = 0;
+        for i in 0..entries {
+            let d = &*(mmap_buf.add(i * desc_size) as *const MemoryDescriptor);
+            max_phys = max_phys.max(d.phys_start + d.num_pages * 4096);
+        }
+
+        // Print "MMAP: <n> entries, top <adresse>"
+        let mmap_label: &[Char16] = &[
+            b'M' as u16, b'M' as u16, b'A' as u16, b'P' as u16, b':' as u16, b' ' as u16, 0,
+        ];
+        let top_label: &[Char16] = &[
+            b' ' as u16, b'e' as u16, b'n' as u16, b't' as u16, b'r' as u16, b'i' as u16,
+            b'e' as u16, b's' as u16, b',' as u16, b' ' as u16, b't' as u16, b'o' as u16,
+            b'p' as u16, b' ' as u16, 0,
+        ];
+        let mut cb = [0u16; 21];
+        let mut tb = [0u16; 19];
+        print(mmap_label.as_ptr());
+        print(u64_to_utf16(entries as u64, &mut cb).as_ptr());
+        print(top_label.as_ptr());
+        print(u64_to_hex(max_phys, &mut tb).as_ptr());
         print(newline.as_ptr());
 
     // boot services stopper ikke af sig selv; vi hænger bare her.
