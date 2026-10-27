@@ -8,7 +8,13 @@
 #![no_std]
 #![no_main]
 
+mod console;
+mod paging;
+
+use console::ConOut;
+use core::fmt::Write;
 use core::panic::PanicInfo;
+use paging::{NO_EXECUTE, SIZE_2M, SIZE_4K, WRITABLE};
 
 // === Minimal UEFI-typer, håndskrevet ===
 // Vi definerer kun lige det vi skal bruge for at nå ConOut->OutputString.
@@ -261,7 +267,7 @@ pub struct Elf64Header {
 #[repr(C)]
 pub struct Elf64ProgramHeader {
     p_type: u32,
-    _flags: u32,
+    flags: u32,
     offset: u64,
     vaddr: u64,
     _paddr: u64,
@@ -291,112 +297,33 @@ pub struct SystemTable {
     boot_services: *const BootServices
 }
 
-fn u64_to_utf16(mut n: u64, buf: &mut [Char16; 21]) -> &[Char16] {
-    if n == 0 {
-        buf[0] = b'0' as u16;
-        buf[1] = 0;
-        return &buf[..2];
-    }
-
-    let mut digits = [0u8; 20];
-    let mut count = 0;
-    while n > 0 {
-        digits[count] = (n % 10) as u8;
-        n /= 10;
-        count += 1;
-    }
-
-    for i in 0..count {
-        buf[i] = (b'0' + digits[count -1 - i]) as u16;
-    }
-    buf[count] = 0;
-    &buf[..count + 1]
-}
-
-fn u64_to_hex(n: u64, buf: &mut [Char16; 19]) -> &[Char16] {
-    let hex = b"0123456789ABCDEF";
-    buf[0] = b'0' as u16;
-    buf[1] = b'x' as u16;
-    for i in 0..16 {
-        let nibble = (n >> (60 - i * 4)) & 0xF;
-        buf[2 + i] = hex[nibble as usize] as u16;
-    }
-    buf[18] = 0;
-    &buf[..19]
-}
-
-fn u8_to_hex(byte: u8, buf: &mut [Char16; 3]) -> &[Char16] {
-    let hex = b"0123456789ABCDEF";
-    buf[0] = hex[(byte >> 4) as usize] as u16;
-    buf[1] = hex[(byte & 0x0F) as usize] as u16;
-    buf[2] = 0;
-    &buf[..3]
-}
-
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const SystemTable) -> Status {
-    // UTF-16-streng, null-termineret. UEFI-tekst er Char16, ikke u8.
-    let msg: &[Char16] = &[
-        b'H' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16,
-        b' ' as u16,
-        b'f' as u16, b'r' as u16, b'o' as u16, b'm' as u16,
-        b' ' as u16,
-        b'U' as u16, b'E' as u16, b'F' as u16, b'I' as u16,
-        b'\r' as u16, b'\n' as u16,
-        0, // null-terminator
-    ];
-
-    let prefix_err: &[Char16] = &[
-        b'E' as u16, b'R' as u16, b'R' as u16, b' ' as u16,
-        b's' as u16, b't' as u16, b'e' as u16, b'p' as u16, b' ' as u16, 0,
-    ];
-
     unsafe {
         let st = &*system_table;
         let bs = &*st.boot_services;
-        let con_out = &*st.con_out;
-
-        let print =|s: *const Char16| {
-            (con_out.output_string)(st.con_out, s);
-        };
+        let mut con = ConOut::new(st.con_out);
 
         // ---1. Loaded Image Protocol: hvilken disk kom vi fra? ---
         let mut loaded_image: *mut u8 = core::ptr::null_mut();
-        let status = (bs.handle_protocol)(
-            _image_handle,
-            &LOADED_IMAGE_GUID,
-            &mut loaded_image,
-        );
+        let status = (bs.handle_protocol)(_image_handle, &LOADED_IMAGE_GUID, &mut loaded_image);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(1, &mut b).as_ptr());
-            loop{}
+            con.fail_status(1, "LoadedImage Protocol", status);
         }
         let li = &*(loaded_image as *const LoadedImageProtocol);
         let device_handle = li.device_handle;
 
         // --- 2. Simple File System Protocol på den disk ---
         let mut sfs: *mut u8 = core::ptr::null_mut();
-        let status = (bs.handle_protocol)(
-            device_handle,
-            &SIMPLE_FILE_SYSTEM_GUID,
-            &mut sfs,
-        );
+        let status = (bs.handle_protocol)(device_handle, &SIMPLE_FILE_SYSTEM_GUID, &mut sfs);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(2, &mut b).as_ptr());
-            loop{}
+            con.fail_status(2, "SimpleFileSystem Protocol", status);
         }
         let mut root: *mut FileProtocol = core::ptr::null_mut();
-        let sfs = &*(sfs as *const SimpleFileSystemProtocol); 
+        let sfs = &*(sfs as *const SimpleFileSystemProtocol);
         let status = (sfs.open_volume)(sfs, &mut root);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(3, &mut b).as_ptr());
-            loop{}
+            con.fail_status(3, "open_volume", status);
         }
         let root = &*root;
 
@@ -405,15 +332,12 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
         let name: &[Char16] = &[
             b'K' as u16, b'E' as u16, b'R' as u16, b'N' as u16,
             b'E' as u16, b'L' as u16, b'.' as u16,
-            b'B' as u16, b'I' as u16, b'N' as u16, 0, 
+            b'B' as u16, b'I' as u16, b'N' as u16, 0,
         ];
         let mut file: *mut FileProtocol = core::ptr::null_mut();
         let status = (root.open)(root, &mut file, name.as_ptr(), 1, 0);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(4, &mut b).as_ptr());
-            loop{}
+            con.fail_status(4, "open KERNEL_BIN", status);
         }
         let file = &*file;
 
@@ -421,63 +345,32 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
         // første kald: buffer_size = 0 -> forventer buffer_too_small,
         // og buffer_size opdateres til den krævede størrelse.
         let mut info_size: usize = 0;
-        let _ = (file.get_info)(
-            file,
-            &FILE_INFO_GUID,
-            &mut info_size,
-            core::ptr::null_mut(),
-        );
+        let _ = (file.get_info)(file, &FILE_INFO_GUID, &mut info_size, core::ptr::null_mut());
         // alloker den krævede plads via allocate_pool
         let mut info_buf: *mut u8 = core::ptr::null_mut();
         let status = (bs.allocate_pool)(2, info_size, &mut info_buf); // 2 = loaderdata
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(5, &mut b).as_ptr());
-            loop{}
-        }                                           
+            con.fail_status(5, "alloc file info", status);
+        }
         // andet kald
-        let status = (file.get_info)(
-            file,
-            &FILE_INFO_GUID,
-            &mut info_size,
-            info_buf
-        );
+        let status = (file.get_info)(file, &FILE_INFO_GUID, &mut info_size, info_buf);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(6, &mut b).as_ptr());
-            loop{}
+            con.fail_status(6, "get_info KERNEL_BIN", status);
         }
 
         // filesize ligger på offset 8 i efi_file_info
         let file_size = *(info_buf.add(8) as *const u64);
 
         // --- 6 print filstørrelsen ---
-// Print: "KERNEL.BIN: <størrelse> bytes"
-        let label: &[Char16] = &[
-            b'K' as u16,b'E' as u16,b'R' as u16,b'N' as u16,b'E' as u16,b'L' as u16,
-            b'.' as u16,b'B' as u16,b'I' as u16,b'N' as u16,b':' as u16,b' ' as u16, 0,
-        ];
-        let suffix: &[Char16] = &[
-            b' ' as u16,b'b' as u16,b'y' as u16,b't' as u16,b'e' as u16,b's' as u16,
-            b'\r' as u16,b'\n' as u16, 0,
-        ];
-        let mut num_buf = [0u16; 21];
-        print(label.as_ptr());
-        print(u64_to_utf16(file_size, &mut num_buf).as_ptr());
-        print(suffix.as_ptr());
+        let _ = write!(con, "KERNEL.BIN: {} bytes\n", file_size);
 
-        // --- 7. Alloket buffer til fil-indhold ---
-        // AnyPages: firmware vælger adressen (scratch-buffe, som besluttet for lag 1)
+        // --- 7. Alloker buffer til fil-indhold ---
+        // AnyPages: firmware vælger adressen (scratch-buffer, som besluttet for lag 1)
         let pages = (file_size as usize + 4095) / 4096;
         let mut kernel_addr: u64 = 0;
-        let status = (bs.allocate_pages)(0,2,pages,&mut kernel_addr);
+        let status = (bs.allocate_pages)(0, 2, pages, &mut kernel_addr);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(7, &mut b).as_ptr());
-            loop {}
+            con.fail_status(7, "alloc kernel file buffer", status);
         }
 
         // --- 8 læs filen ind i bufferen
@@ -485,99 +378,63 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
         let mut read_size = file_size as usize;
         let status = (file.read)(file, &mut read_size, kernel_addr as *mut u8);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(8, &mut b).as_ptr());
-            loop {}
+            con.fail_status(8, "read KERNEL_BIN", status);
         }
-
-        let ok: &[Char16] = &[
-            b'R' as u16,b'e' as u16, b'a' as u16, b'd' as u16, b' ' as u16,
-            b'O' as u16,b'K' as u16, b':' as u16,b' ' as u16, 0,
-        ];
-        let space: &[Char16] = &[b' ' as u16, 0];
-        print(ok.as_ptr());
-
         let data = kernel_addr as *const u8;
-        for i in 0..4 {
-            let byte = *data.add(i);
-            let mut hb = [0u16; 3];
-            print(u8_to_hex(byte, &mut hb).as_ptr());
-            print(space.as_ptr());
-        }
-        let newline: &[Char16] = &[b'\r' as u16, b'\n' as u16, 0];
-        print(newline.as_ptr());
+        let _ = write!(
+            con,
+            "Read OK: {:02X} {:02X} {:02X} {:02X}\n",
+            *data, *data.add(1), *data.add(2), *data.add(3)
+        );
 
         // --- 9 Graphics Output Protocol
         let mut gop: *mut u8 = core::ptr::null_mut();
-            let status = (bs.locate_protocol)(
-                &GRAPHICS_OUTPUT_GUID,
-                core::ptr::null_mut(),
-                &mut gop,
-            );
-            if status != 0 {
-                let mut b = [0u16; 21];
-                print(prefix_err.as_ptr());
-                print(u64_to_utf16(9, &mut b).as_ptr());
-                    loop {}
-                }
-                let gop = &*(gop as *const GraphicsOutputProtocol);
-                let mode = &*gop.mode;
-                let info = &*mode.info;
-                
-                if info.pixel_format != 1 {
-                    let mut b = [0u16; 21];
-                    print(prefix_err.as_ptr());
-                    print(u64_to_utf16(10, &mut b).as_ptr());
-                        loop{}
-                }
-                
-                let width = info.horizontal_resolution;
-                let height = info.vertical_resolution;
-                let stride = info.pixels_per_scan_line; 
-                let fb = mode.frame_buffer_base as *mut u32;
-                
-
-                // --- 10. print opløsning "GOP: <w>x<h>"
-                let gop_label: &[Char16] = &[
-                    b'G' as u16, b'O' as u16, b'P' as u16, b':' as u16, b' ' as u16, 0,
-                ];
-                let x_sep: &[Char16] = &[b'x' as u16, 0];
-                let mut wb = [0u16; 21];
-                let mut hb = [0u16; 21];
-                print(gop_label.as_ptr());
-                print(u64_to_utf16(width as u64, &mut wb).as_ptr());
-                print(x_sep.as_ptr());
-                print(u64_to_utf16(height as u64, &mut hb).as_ptr());
-                print(newline.as_ptr());
-
-
-                // --- 11. TestMaling 
-                let x0 = width / 2 - 100;
-                let y0 = height / 2 - 50;
-                for y in y0..y0 + 100 {
-                    for x in x0..x0 + 200 {
-                        fb.add((y * stride + x) as usize).write_volatile(0x00FF0000);
+        let status = (bs.locate_protocol)(&GRAPHICS_OUTPUT_GUID, core::ptr::null_mut(), &mut gop);
+        if status != 0 {
+            con.fail_status(9, "locate GOP", status);
         }
-    }
+        let gop = &*(gop as *const GraphicsOutputProtocol);
+        let mode = &*gop.mode;
+        let info = &*mode.info;
 
-    // --- 12. Valider ELF-headeren
-    let elf = &*(kernel_addr as *const Elf64Header);
-    let valid = elf.ident[0..4] == [0x7F, b'E', b'L', b'F']
+        if info.pixel_format != 1 {
+            con.fail(10, "GOP pixel format not BGR");
+        }
+
+        let width = info.horizontal_resolution;
+        let height = info.vertical_resolution;
+        let stride = info.pixels_per_scan_line;
+        let fb = mode.frame_buffer_base as *mut u32;
+
+        // --- 10. print opløsning
+        let _ = write!(con, "GOP: {}x{}\n", width, height);
+
+        // --- 11. TestMaling
+        let x0 = width / 2 - 100;
+        let y0 = height / 2 - 50;
+        for y in y0..y0 + 100 {
+            for x in x0..x0 + 200 {
+                fb.add((y * stride + x) as usize).write_volatile(0x00FF0000);
+            }
+        }
+
+        // --- 12. Valider ELF-headeren
+        let elf = &*(kernel_addr as *const Elf64Header);
+        let valid = elf.ident[0..4] == [0x7F, b'E', b'L', b'F']
             && elf.ident[4] == 2
             && elf.ident[5] == 1
             && elf.machine == 0x3E
             && elf.phentsize as usize == core::mem::size_of::<Elf64ProgramHeader>()
             && elf.phoff + elf.phnum as u64 * elf.phentsize as u64 <= file_size;
-                if !valid {
-                    let mut b = [0u16; 21];
-    print(prefix_err.as_ptr());
-    print(u64_to_utf16(11, &mut b).as_ptr());
-            loop {}
+        if !valid {
+            con.fail(11, "invalid ELF header");
         }
-        let phdrs = core::slice::from_raw_parts((kernel_addr + elf.phoff) as *const Elf64ProgramHeader, elf.phnum as usize); 
+        let phdrs = core::slice::from_raw_parts(
+            (kernel_addr + elf.phoff) as *const Elf64ProgramHeader,
+            elf.phnum as usize,
+        );
 
-        // --- 13 
+        // --- 13
         let mut v_start = u64::MAX;
         let mut v_end = 0u64;
         for ph in phdrs {
@@ -586,63 +443,39 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
             }
             v_start = v_start.min(ph.vaddr);
             v_end = v_end.max(ph.vaddr + ph.memsz);
-            }
-            if v_start != KERNEL_VMA {
-                let mut b = [0u16; 21];
-        print(prefix_err.as_ptr());
-        print(u64_to_utf16(12, &mut b).as_ptr());
-            loop {}
+        }
+        if v_start != KERNEL_VMA {
+            con.fail(12, "kernel not linked at KERNEL_VMA");
         }
         let kernel_pages = ((v_end - v_start + 4095) / 4096) as usize;
 
-
         // --- 14
         let mut kernel_phys: u64 = 0;
-        let status = (bs.allocate_pages)(0,2,kernel_pages, &mut kernel_phys);
-            if status != 0 {
-                let mut b = [0u16; 21];
-        print(prefix_err.as_ptr());
-        print(u64_to_utf16(13, &mut b).as_ptr());
-            loop {}
+        let status = (bs.allocate_pages)(0, 2, kernel_pages, &mut kernel_phys);
+        if status != 0 {
+            con.fail_status(13, "alloc kernel memory", status);
         }
-
         core::ptr::write_bytes(kernel_phys as *mut u8, 0, kernel_pages * 4096);
-        // --- 15 
+
+        // --- 15
         for ph in phdrs {
             if ph.p_type != PT_LOAD {
-                    continue;
+                continue;
             }
             if ph.offset + ph.filesz > file_size {
-                let mut b = [0u16; 21];
-        print(prefix_err.as_ptr());
-        print(u64_to_utf16(14, &mut b).as_ptr());
-                loop {}
-                }
-                let src = (kernel_addr + ph.offset) as *const u8;
-                let dst = (kernel_phys + (ph.vaddr - KERNEL_VMA)) as *mut u8;
-                core::ptr::copy_nonoverlapping(src, dst, ph.filesz as usize);
-                }
+                con.fail(14, "ELF segment outside file");
+            }
+            let src = (kernel_addr + ph.offset) as *const u8;
+            let dst = (kernel_phys + (ph.vaddr - KERNEL_VMA)) as *mut u8;
+            core::ptr::copy_nonoverlapping(src, dst, ph.filesz as usize);
+        }
 
-        // --- 16 
-        let elf_label: &[Char16] = &[
-        b'E' as u16, b'L' as u16, b'F' as u16, b':' as u16, b' ' as u16, 0,
-        ]; 
-        let pages_label: &[Char16] = &[
-        b' ' as u16, b'p' as u16, b'a' as u16, b'g' as u16, b'e' as u16, b's' as u16, b' ' as u16, b'@' as u16, b' ' as u16, 0,
-    ];
-        let entry_label: &[Char16] = &[
-        b' ' as u16, b'e' as u16, b'n' as u16, b't' as u16, b'r' as u16, b'y' as u16, b' ' as u16, 0, 
-    ];
-        let mut nb = [0u16; 21];
-        let mut pb = [0u16; 19];
-        let mut eb = [0u16; 19];
-        print(elf_label.as_ptr());
-        print(u64_to_utf16(kernel_pages as u64, &mut nb).as_ptr());
-        print(pages_label.as_ptr());
-        print(u64_to_hex(kernel_phys, &mut pb).as_ptr());
-        print(entry_label.as_ptr());
-        print(u64_to_hex(elf.entry, &mut eb).as_ptr());
-        print(newline.as_ptr());
+        // --- 16
+        let _ = write!(
+            con,
+            "ELF: {} pages @ {:#018x} entry {:#x}\n",
+            kernel_pages, kernel_phys, elf.entry
+        );
 
         // --- 17 mem map, første kald giver krævet størrelse
         let mut mmap_size: usize = 0;
@@ -661,10 +494,7 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
         let mut mmap_buf: *mut u8 = core::ptr::null_mut();
         let status = (bs.allocate_pool)(2, mmap_capacity, &mut mmap_buf);
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(15, &mut b).as_ptr());
-            loop {}
+            con.fail_status(15, "alloc memory map buffer", status);
         }
 
         // andet kald: nu med buffer, så får vi selve mappen
@@ -677,10 +507,7 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
             &mut desc_version,
         );
         if status != 0 {
-            let mut b = [0u16; 21];
-            print(prefix_err.as_ptr());
-            print(u64_to_utf16(16, &mut b).as_ptr());
-            loop {}
+            con.fail_status(16, "get_memory_map", status);
         }
 
         // --- 18. Gå mappen igennem: antal indgange og højeste fysiske adresse ---
@@ -690,28 +517,89 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
             let d = &*(mmap_buf.add(i * desc_size) as *const MemoryDescriptor);
             max_phys = max_phys.max(d.phys_start + d.num_pages * 4096);
         }
+        let _ = write!(con, "MMAP: {} entries, top {:#018x}\n", entries, max_phys);
 
-        // Print "MMAP: <n> entries, top <adresse>"
-        let mmap_label: &[Char16] = &[
-            b'M' as u16, b'M' as u16, b'A' as u16, b'P' as u16, b':' as u16, b' ' as u16, 0,
-        ];
-        let top_label: &[Char16] = &[
-            b' ' as u16, b'e' as u16, b'n' as u16, b't' as u16, b'r' as u16, b'i' as u16,
-            b'e' as u16, b's' as u16, b',' as u16, b' ' as u16, b't' as u16, b'o' as u16,
-            b'p' as u16, b' ' as u16, 0,
-        ];
-        let mut cb = [0u16; 21];
-        let mut tb = [0u16; 19];
-        print(mmap_label.as_ptr());
-        print(u64_to_utf16(entries as u64, &mut cb).as_ptr());
-        print(top_label.as_ptr());
-        print(u64_to_hex(max_phys, &mut tb).as_ptr());
-        print(newline.as_ptr());
+        // --- 19. Byg page tables ---
+        // Hver tabel er én nulstillet side, markeret som LoaderData,
+        // så kernen senere kan se i memory map at de er i brug.
+        // `move`: closuren får sin egen kopi af con, så vi stadig kan bruge write! herude.
+        let alloc_table = move || -> u64 {
+            let mut page: u64 = 0;
+            let status = (bs.allocate_pages)(0, 2, 1, &mut page);
+            if status != 0 {
+                con.fail_status(17, "alloc page table", status);
+            }
+            core::ptr::write_bytes(page as *mut u8, 0, 4096);
+            page
+        };
+        let mut pt = paging::PageTables::new(alloc_table);
 
-    // boot services stopper ikke af sig selv; vi hænger bare her.
-    loop {}
+        // Identity map: alle indgange undtagen Reserved (0) og Unusable (8), med 2 MB-sider
+        for i in 0..entries {
+            let d = &*(mmap_buf.add(i * desc_size) as *const MemoryDescriptor);
+            if d.mem_type == 0 || d.mem_type == 8 {
+                continue;
+            }
+            let start = d.phys_start & !(SIZE_2M - 1);
+            let end = (d.phys_start + d.num_pages * 4096 + SIZE_2M - 1) & !(SIZE_2M - 1);
+            let mut addr = start;
+            while addr < end {
+                pt.map_2m(addr, addr, WRITABLE);
+                addr += SIZE_2M;
+            }
+        }
+
+        // Framebufferen står typisk ikke i memory map, så den mappes for sig (RW, ikke eksekverbar)
+        let fb_start = mode.frame_buffer_base & !(SIZE_2M - 1);
+        let fb_end = (mode.frame_buffer_base + mode.frame_buffer_size as u64 + SIZE_2M - 1)
+            & !(SIZE_2M - 1);
+        let mut addr = fb_start;
+        while addr < fb_end {
+            pt.map_2m(addr, addr, WRITABLE | NO_EXECUTE);
+            addr += SIZE_2M;
+        }
+
+        // Higher half: kernens segmenter med 4 KB-sider og rettigheder fra ELF
+        for ph in phdrs {
+            if ph.p_type != PT_LOAD {
+                continue;
+            }
+            let mut flags = 0;
+            if ph.flags & 2 != 0 {
+                flags |= WRITABLE; // PF_W
+            }
+            if ph.flags & 1 == 0 {
+                flags |= NO_EXECUTE; // ikke PF_X
+            }
+            let mut v = ph.vaddr & !(SIZE_4K - 1);
+            while v < ph.vaddr + ph.memsz {
+                pt.map_4k(v, kernel_phys + (v - KERNEL_VMA), flags);
+                v += SIZE_4K;
+            }
+        }
+
+        // --- 20. Verificér med en software page walk ---
+        // (virtuel adresse, forventet fysisk adresse)
+        let here = efi_main as *const () as u64;
+        let stack = &mmap_size as *const usize as u64;
+        let checks = [
+            (KERNEL_VMA, kernel_phys, "PT check: kernel start"),                           // kernens første side
+            (elf.entry, kernel_phys + (elf.entry - KERNEL_VMA), "PT check: _start"), // _start
+            (here, here, "PT check: loader code"),                                        // loaderens egen kode
+            (stack, stack, "PT check: stack"),                                      // stacken
+            (fb as u64, fb as u64, "PT check: framebuffer"),                              // framebufferen
+        ];
+        for (i, &(virt, expected, what)) in checks.iter().enumerate() {
+            if pt.translate(virt) != Some(expected) {
+                con.fail(18 + i as u64, what);
+            }
+        }
+        let _ = write!(con, "PT: {} tables OK\n", pt.tables);
+
+        // boot services stopper ikke af sig selv; vi hænger bare her.
+        loop {}
     }
-} 
+}
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {

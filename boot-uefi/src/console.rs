@@ -1,4 +1,4 @@
-use crate::{Char16, SimpleTextOutputProtocol};
+use crate::{Char16, SimpleTextOutputProtocol, Status};
 use core::fmt::{self, Write};
 
 #[derive(Clone, Copy)]
@@ -11,8 +11,17 @@ impl ConOut {
         ConOut { out }
     }
 
-    pub fn fail(mut self, step: u64) -> ! {
-        let _ = write!(self, "ERR step {}\n", step);
+    pub fn fail(mut self, code: u64, what: &str) -> ! {
+        let _ = write!(self, "ERR step {}:{}\n", code, what);
+        loop {}
+    }
+
+    pub fn fail_status(mut self, code: u64, what: &str, status: Status) -> ! {
+        let _ = write!(
+        self,
+        "ERR {}: {} (status {:#x} {})\n",
+        code, what, status, status_name(status)
+        );
         loop {}
     }
 
@@ -21,7 +30,7 @@ impl ConOut {
         unsafe {
             ((*self.out).output_string)(self.out, buf.as_ptr());
         }
-    }
+}
 }
 
 impl fmt::Write for ConOut {
@@ -44,5 +53,21 @@ impl fmt::Write for ConOut {
             self.flush(&mut buf, len);
         }
         Ok(())
+    }
+}
+
+fn status_name(status : Status) -> &'static str {
+    match status & !(1 << 63) {
+        1 => "LOAD_ERROR",
+        2 => "INVALID_PARAMETER",
+        3 => "UNSUPPORTED",
+        4 => "BAD_BUFFER_SIZE",
+        5 => "BUFFER_TOO_SMALL",
+        6 => "NOT_READY",
+        7 => "DEVICE_ERROR",
+        9 => "OUT_OF_RESOURCES",
+        14 => "NOT_FOUND",
+        15 => "ACCESS_DENIED",
+        _ => "?",
     }
 }
