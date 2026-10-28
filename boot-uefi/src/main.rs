@@ -113,7 +113,7 @@ pub struct BootServices {
     _start_image: usize,
     _exit: usize,
     _unload_image: usize,
-    _exit_boot_services: usize,
+    exit_boot_services: extern "efiapi" fn(image_handle: usize, map_key: usize) -> Status,
     _get_next_monotonic_count: usize,
     _stall: usize,
     _set_watchdog_timer: usize,
@@ -278,6 +278,7 @@ pub struct Elf64ProgramHeader {
 
 const PT_LOAD: u32 = 1;
 const KERNEL_VMA: u64 = 0xFFFF_FFFF_8000_0000;
+const KERNEL_STACK_PAGES: usize = 16; // KB
 
 
 
@@ -595,9 +596,77 @@ pub extern "efiapi" fn efi_main(_image_handle: usize, system_table: *const Syste
             }
         }
         let _ = write!(con, "PT: {} tables OK\n", pt.tables);
+    
+        let mut stack_phys: u64 = 0;
+        let status = (bs.allocate_pages)(0,2, KERNEL_STACK_PAGES, &mut stack_phys);
+        if status != 0 {
+            con.fail_status(23, "alloc kernel stack", status);
+        }
+        let gaurd_page = KERNEL_VMA + kernel_pages as u64 * SIZE_4K;
+        let stack_bottom = gaurd_page + SIZE_4K;
+        for i in 0..KERNEL_STACK_PAGES as u64 {
+            pt.map_4k(
+                stack_bottom + i * SIZE_4K,
+                stack_phys + i * SIZE_4K,
+                WRITABLE | NO_EXECUTE,
+            );
+        }
+        let stack_top = stack_bottom + KERNEL_STACK_PAGES as u64 * SIZE_4K;
+        let stack_top_phys = stack_phys + KERNEL_STACK_PAGES as u64 * SIZE_4K;
+        if pt.translate(stack_top - 8) != Some(stack_top_phys - 8) {
+            con.fail(24, "PT check: kernel stack");
+        }
+        if pt.translate(gaurd_page).is_some() {
+            con.fail(25, "PT check: gaurd page is mapped");
+        }
+        let _ = write!(con, "Stack: {:#x} - {:#x}\n", stack_bottom, stack_top);
+        let _ = write!(con, "ExitBootServices, jumping to {:#x}\n", elf.entry);
 
-        // boot services stopper ikke af sig selv; vi hænger bare her.
-        loop {}
+        //--- 22 
+        let mut exited = false;
+        for _ in 0..2 {
+            mmap_size = mmap_capacity;
+            let status = (bs.get_memory_map)(
+                &mut mmap_size,
+                mmap_buf,
+                &mut map_key,
+                &mut desc_size,
+                &mut desc_version,
+            );
+            if status != 0 { 
+                con.fail_status(26, "final get_memory_map", status);
+            }
+            if (bs.exit_boot_services)(_image_handle, map_key) == 0 {
+                exited = true;
+                break;
+            }
+        }
+        if !exited {
+            con.fail(27, "ExitBootServices");
+        }
+
+        // --- 23
+        core::arch::asm!(
+            "cli", 
+            "mov ecx, 0xC0000080",
+            "rdmsr",
+            "or eax, 1 << 11",
+            "wrmsr",
+            "mov rax, cr0",
+            "or rax, 1 << 16",
+            "mov cr0, rax",
+            "mov cr3, r8",
+            "mov rsp, r9",
+            "xor rbp, rbp",
+            "push 0",
+            "jmp r10",
+            in("r8") pt.pml4,
+            in("r9") stack_top,
+            in("r10") elf.entry,
+            options(noreturn),
+        );
+        
+
     }
 }
 
